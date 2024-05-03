@@ -3,7 +3,7 @@ import ssl
 import json
 import csv
 import socket
-from datetime import datetime, timezone
+import time
 
 APPLIANCES_CSV = 'appliances.csv'
 CONNECTION_STATUS_CSV = 'connection_status.csv'
@@ -26,11 +26,16 @@ def check_cloud_status(eh_host, api_key):
     except(http.client.BadStatusLine, http.client.IncompleteRead, http.client.HTTPException, ssl.SSLError, json.JSONDecodeError, TimeoutError, socket.gaierror) as e:
         print(f'Error occured while fetching cloud status for {eh_host}: {e}')
         return None
-
   
-def convert_epoch_to_datetime(epoch_time):
-    return datetime.fromtimestamp(epoch_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-
+def convert_epoch_time(epoch_time):
+    if epoch_time is None:
+        return 'N/A'
+    try:
+        return time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.localtime(epoch_time))
+    except OSError as e:
+        print(f'Error occured while converting epoch time for {epoch_time}: {e}')
+        return(f'Invalid Time: {epoch_time}')
+    
 def main():
     with open(APPLIANCES_CSV, 'r') as csvfile:
         reader = csv.DictReader(csvfile)
@@ -45,8 +50,8 @@ def main():
                     connection_status = cloud_status['connection_status']
                     connection_status_color = cloud_status['connection_status_color']
                     last_active_time_epoch = cloud_status['last_active_time']
-                    last_active_time_gmt = convert_epoch_to_datetime(last_active_time_epoch)
-                    writer.writerow({'eh_host': eh_host, 'connection_status': connection_status, 'connection_status_color': connection_status_color, 'last_active_time': last_active_time_gmt})
+                    last_active_time = convert_epoch_time(last_active_time_epoch)
+                    writer.writerow({'eh_host': eh_host, 'connection_status': connection_status, 'connection_status_color': connection_status_color, 'last_active_time': last_active_time})
                 else:
                     writer.writerow({'eh_host': eh_host, 'connection_status': 'N/A', 'connection_status_color': 'N/A', 'last_active_time': 'N/A'})
 
