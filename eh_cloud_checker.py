@@ -3,7 +3,7 @@ import ssl
 import json
 import csv
 import socket
-from datetime import datetime
+from datetime import datetime, timezone
 
 APPLIANCES_CSV = 'appliances.csv'
 CONNECTION_STATUS_CSV = 'connection_status.csv'
@@ -29,7 +29,7 @@ def check_cloud_status(eh_host, api_key):
 
   
 def convert_epoch_to_datetime(epoch_time):
-    return datetime.datetime.utcfromtimestamp(epoch_time).strftime('%Y-%m-%d %H:%M:%S')
+    return datetime.fromtimestamp(epoch_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 def main():
     with open(APPLIANCES_CSV, 'r') as csvfile:
