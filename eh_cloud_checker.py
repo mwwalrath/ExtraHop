@@ -3,6 +3,7 @@ import ssl
 import json
 import csv
 import socket
+from datetime import datetime
 
 APPLIANCES_CSV = 'appliances.csv'
 CONNECTION_STATUS_CSV = 'connection_status.csv'
@@ -26,6 +27,10 @@ def check_cloud_status(eh_host, api_key):
         print(f'Error occured while fetching cloud status for {eh_host}: {e}')
         return None
 
+  
+def convert_epoch_to_datetime(epoch_time):
+    return datetime.datetime.utcfromtimestamp(epoch_time).strftime('%Y-%m-%d %H:%M:%S')
+
 def main():
     with open(APPLIANCES_CSV, 'r') as csvfile:
         reader = csv.DictReader(csvfile)
@@ -39,8 +44,9 @@ def main():
                 if cloud_status:
                     connection_status = cloud_status['connection_status']
                     connection_status_color = cloud_status['connection_status_color']
-                    last_active_time = cloud_status['last_active_time']
-                    writer.writerow({'eh_host': eh_host, 'connection_status': connection_status, 'connection_status_color': connection_status_color, 'last_active_time': last_active_time})
+                    last_active_time_epoch = cloud_status['last_active_time']
+                    last_active_time_gmt = convert_epoch_to_datetime(last_active_time_epoch)
+                    writer.writerow({'eh_host': eh_host, 'connection_status': connection_status, 'connection_status_color': connection_status_color, 'last_active_time': last_active_time_gmt})
                 else:
                     writer.writerow({'eh_host': eh_host, 'connection_status': 'N/A', 'connection_status_color': 'N/A', 'last_active_time': 'N/A'})
 
