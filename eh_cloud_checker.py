@@ -2,6 +2,7 @@ import http.client
 import ssl
 import json
 import csv
+import socket
 
 APPLIANCES_CSV = 'appliances.csv'
 CONNECTION_STATUS_CSV = 'connection_status.csv'
@@ -21,14 +22,14 @@ def check_cloud_status(eh_host, api_key):
             return cloud_status
         else:
             print(f'Error occured while fetching cloud status for {eh_host}: {response.status} {response}')
-    except(http.client.BadStatusLine, http.client.IncompleteRead, http.client.HTTPException, ssl.SSLError, json.JSONDecodeError) as e:
+    except(http.client.BadStatusLine, http.client.IncompleteRead, http.client.HTTPException, ssl.SSLError, json.JSONDecodeError, TimeoutError, socket.gaierror) as e:
         print(f'Error occured while fetching cloud status for {eh_host}: {e}')
         return None
 
 def main():
     with open(APPLIANCES_CSV, 'r') as csvfile:
         reader = csv.DictReader(csvfile)
-        with open('cloud_status.csv', 'w') as new_csvfile:
+        with open('cloud_status.csv', 'w', newline='') as new_csvfile:
             writer = csv.DictWriter(new_csvfile, fieldnames=['eh_host', 'connection_status', 'connection_status_color', 'last_active_time'])
             writer.writeheader()
             for row in reader:
