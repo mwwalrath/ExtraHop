@@ -31,7 +31,8 @@ def convert_epoch_time(epoch_time):
     if epoch_time is None:
         return 'N/A'
     try:
-        return time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.localtime(epoch_time))
+        epoch_time_seconds = epoch_time / 1000
+        return time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.localtime(epoch_time_seconds))
     except OSError as e:
         print(f'Error occured while converting epoch time for {epoch_time}: {e}')
         return(f'Invalid Time: {epoch_time}')
