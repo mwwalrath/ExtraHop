@@ -8,18 +8,22 @@ CONNECTION_STATUS_CSV = 'connection_status.csv'
 
 def check_cloud_status(eh_host, api_key):
     try:
-        connection = http.client.HTTPSConnection(eh_host, 443, contect=ssl._create_unverified_context())
+        connection = http.client.HTTPSConnection(eh_host, 443, context=ssl._create_unverified_context())
         headers = {
             'accept': 'application/json',
             'Authorization': 'ExtraHop apikey=' + api_key
         }
         connection.request('GET', '/api/v1/appliances/0/cloudservices', headers=headers)
         response = connection.getresponse()
-        data = response.read()
-        cloud_status = json.loads(data.decode('utf-8'))
-        return cloud_status
+        if response.status == 200:
+            data = response.read()
+            cloud_status = json.loads(data.decode('utf-8'))
+            return cloud_status
+        else:
+            print(f'Error occured while fetching cloud status for {eh_host}: {response.status} {response}')
     except(http.client.BadStatusLine, http.client.IncompleteRead, http.client.HTTPException, ssl.SSLError, json.JSONDecodeError) as e:
         print(f'Error occured while fetching cloud status for {eh_host}: {e}')
+        return None
 
 def main():
     with open(APPLIANCES_CSV, 'r') as csvfile:
