@@ -235,7 +235,7 @@ def audit_custom_devices(appliances_csv, verbose=False, include_criteria=False, 
                                 writer.writerow(row)
                     logging.info(f"Custom devices successfully written to {csv_filename}")
 
-def create_custom_devices_from_csv(appliances_csv, custom_devices_csv, patch):
+def create_custom_devices_from_csv(appliances_csv, custom_devices_csv):
     with open(appliances_csv, mode='r') as csv_file_1:
         appliances_reader = csv.DictReader(csv_file_1)
         for appliance in appliances_reader:
@@ -256,23 +256,39 @@ def create_custom_devices_from_csv(appliances_csv, custom_devices_csv, patch):
                                 'disabled': device.get('disabled', 'false').lower() == 'true',
                                 'criteria': []
                             }
-                        criteria = {
-                            'ipaddr': device.get('ipaddr', ''),
-                            'ipaddr_direction': device.get('ipaddr_direction', ''),
-                            'ipaddr_peer': device.get('ipaddr_peer', ''),
-                            'src_port_min': int(device.get('src_port_min', '')),
-                            'src_port_max': int(device.get('src_port_max', '')),
-                            'dst_port_min': int(device.get('dst_port_min', '')),
-                            'dst_port_max': int(device.get('dst_port_max', '')),
-                            'vlan_min': int(device.get('vlan_min', '')),
-                            'vlan_max': int(device.get('vlan_max', ''))
-                        }
-                        devices[name]['criteria'].append(criteria)
+                        criteria = {}
+                        if device.get('ipaddr', '').strip():
+                            criteria['ipaddr'] = device.get('ipaddr', '')
+                        if device.get('ipaddr_direction', '').strip():
+                            criteria['ipaddr_direction'] = device.get('ipaddr_direction', '')
+                        if device.get('ipaddr_peer', '').strip():
+                            criteria['ipaddr_peer'] = device.get('ipaddr_peer', '')
+                        if device.get('src_port_min', '').strip():
+                            criteria['src_port_min'] = int(device.get('src_port_min', 0))
+                        if device.get('src_port_max', '').strip():
+                            criteria['src_port_max'] = int(device.get('src_port_max', 0))
+                        if device.get('dst_port_min', '').strip():
+                            criteria['dst_port_min'] = int(device.get('dst_port_min', 0))
+                        if device.get('dst_port_max', '').strip():
+                            criteria['dst_port_max'] = int(device.get('dst_port_max', 0))
+                        if device.get('vlan_min', '').strip():
+                            criteria['vlan_min'] = int(device.get('vlan_min', 0))
+                        if device.get('vlan_max', '').strip():
+                            criteria['vlan_max'] = int(device.get('vlan_max', 0))
+
+                        if criteria:
+                            devices[name]['criteria'].append(criteria)
 
                 for device_name, device_payload in devices.items():
+                    final_payload = {
+                        "author": device_payload['author'],
+                        "name": 'API Automation',
+                        "description": device_payload['description'],
+                        "disabled": device_payload['disabled'],
+                        "criteria": device_payload['criteria']
+                    }
                     logger.info(f'Creating device: {device_name}')
-                    create_custom_device(hostname, api_key, device_payload, patch)
-
+                    create_custom_device(hostname, api_key, final_payload)
 
 def main():
     logger.info('Initializing Custom Device Manager...')
@@ -300,7 +316,7 @@ def main():
 
     if args.create and args.appliances:
         logger.info('Creating Custom Devices...')
-        create_custom_devices_from_csv(args.appliances, args.create, args.patch)
+        create_custom_devices_from_csv(args.appliances, args.create)
 
 
 if __name__ == '__main__':
