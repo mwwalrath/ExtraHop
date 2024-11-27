@@ -94,7 +94,7 @@ The CSV should include the following headers:
 | hostname    | api_key |
 |-------------|---------|
 
-#### Custom Devices CSV (Create/Patch:
+#### Custom Devices CSV (Create/Patch):
 
 The CSV should include the following headers:
 
