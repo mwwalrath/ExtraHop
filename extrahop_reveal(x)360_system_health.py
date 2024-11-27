@@ -35,11 +35,11 @@ import time
 # The hostname of the Reveal(x) 360 API.
 # This hostname is displayed in Reveal(x) 360 on the API Access page under API Endpoint.
 # The hostname does not include the /oauth/token.
-HOST = 'zurich.api.cloud.extrahop.com'
+HOST = ''
 # The ID of the REST API credentials.
-ID = '70bp4l592m0pja6mnmquansgn1'
+ID = ''
 # The secret of the REST API credentials.
-SECRET = 'q5espsb95v6121p6a1u03kna0iqhfitqhplds9c6jmlirai3077'
+SECRET = ''
 
 # LOOKBACK VARIABLES
 # The beginning timestamp for the request.
