@@ -16,8 +16,8 @@ import sys
 # --- USER DEFINED VARIABLES --- #
 
 HOST = "extrahop-sa.cloud.extrahop.com"
-ID = "1kvbc4go50a27g90vvvph0vvh1"
-SECRET = "hafnl6biichetb35186te66hn7ap00id0jv0ji25c68cr27ippm"
+ID = ""
+SECRET = ""
 TOKEN = ""
 FILENAME = "detection_formats.csv"
 
