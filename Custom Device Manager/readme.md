@@ -2,16 +2,18 @@
 
 ## Overview
 
-This script provides functionality to manage **ExtraHop Custom Devices** by interacting with the ExtraHop REST API. It enables auditing of custom devices, retrieving device metrics, searching for existing devices, and creating new custom devices using data from CSV files.
+This script manages **ExtraHop Custom Devices** by interacting with the ExtraHop REST API. It enables auditing, retrieving device metrics, searching, creating, patching, and deleting custom devices using data from CSV files.
 
-The script logs detailed information about operations, with a robust error-handling mechanism to ensure issues are easy to trace.
+The script logs detailed information about operations, with robust error-handling mechanisms to ensure traceability of issues.
 
 ## Features
 
 - **Audit Custom Devices:** Retrieve and export details of existing custom devices from ExtraHop appliances.
-- **Search for Devices:** Search for devices by name using ExtraHop REST API.
+- **Search for Devices:** Search for devices by name using the ExtraHop REST API.
 - **Metric Querying:** Query metrics for a specific device.
-- **Create Custom Devices:** Create custom devices on ExtraHop appliances using a CSV file as input.
+- **Create Custom Devices:** Create custom devices on ExtraHop appliances using data from a CSV file.
+- **Patch Custom Devices:** Update existing custom devices if they already exist (supports user confirmation or batch updating).
+- **Delete Custom Devices:** Delete custom devices based on data from a CSV file.
 
 ## Requirements
 
@@ -31,19 +33,21 @@ The script generates a log file in the `logs` directory, named based on the scri
 
 ## Usage
 
-The script is used to audit and manage custom devices on ExtraHop appliances. It can be invoked via command-line with different options for auditing, creating, and more.
+The script is used to audit and manage custom devices on ExtraHop appliances. It can be invoked via command-line with different options for auditing, creating, patching, deleting, and more.
 
 ### Command-Line Arguments
 
-| Argument           | Description                                                                                 |
-|--------------------|---------------------------------------------------------------------------------------------|
-| `--appliances`     | Path to the CSV file containing appliance hostnames and API keys.                           |
-| `--audit`          | Audit the existing custom devices on the appliance(s).                                      |
-| `--verbose`        | Include additional details in the CSV output for auditing purposes.                         |
-| `--include_criteria`| Include the custom device criteria while auditing.                                          |
-| `--include_metrics`| Include custom device metrics in the audit output.                                          |
-| `--create`         | Path to the CSV file containing custom devices to be created.                               |
-| `--patch`          | Update existing custom device if it already exists (Not implemented in the script).         |
+| Argument             | Description                                                                                 |
+|----------------------|---------------------------------------------------------------------------------------------|
+| `--appliances`       | Path to the CSV file containing appliance hostnames and API keys.                           |
+| `--audit`            | Audit the existing custom devices on the appliance(s).                                      |
+| `--verbose`          | Include additional details in the CSV output for auditing purposes.                         |
+| `--include_criteria` | Include the custom device criteria while auditing.                                          |
+| `--include_metrics`  | Include custom device metrics in the audit output.                                          |
+| `--create`           | Path to the CSV file containing custom devices to be created.                               |
+| `--patch`            | Update existing custom device if it already exists.                                         |
+| `--delete`           | Path to the CSV file containing custom devices to be deleted.                               |
+| `--log-level`        | Set the logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Defaults to `INFO`.|
 
 ### Example Usage
 
@@ -63,6 +67,22 @@ The script is used to audit and manage custom devices on ExtraHop appliances. It
 
     This command will create custom devices on ExtraHop appliance(s) using the list provided in `custom_devices.csv`.
 
+3. **Patching Existing Custom Devices:**
+
+    ```sh
+    python custom_device_manager.py --appliances appliances.csv --create custom_devices.csv --patch
+    ```
+
+    This command will create custom devices and patch them if they already exist.
+
+4. **Deleting Custom Devices from CSV:**
+
+    ```sh
+    python custom_device_manager.py --appliances appliances.csv --delete custom_devices_to_delete.csv
+    ```
+
+    This command will delete custom devices listed in `custom_devices_to_delete.csv`.
+
 ### CSV File Format
 
 The script works with CSV files to load appliance and custom device information.
@@ -71,9 +91,8 @@ The script works with CSV files to load appliance and custom device information.
 
 The CSV should include the following headers:
 
-| eh_host      | api_key |
-|--------------|---------|
-| appliance_ip | api_key |
+| hostname    | api_key |
+|-------------|---------|
 
 #### Custom Devices CSV:
 
