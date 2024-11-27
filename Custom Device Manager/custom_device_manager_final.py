@@ -39,7 +39,7 @@ def setup_https_connection(hostname):
     retries = 3
     for attempt in range(retries):
         try:
-            connection = http.client.HTTPSConnection(hostname, 443, context=ssl._create_unverified_context())
+            connection = http.client.HTTPSConnection(hostname, 443, timeout = 10, context=ssl._create_unverified_context())
             return connection
         except Exception as e:
             logger.error(f'Exception occured while establishing connections to {hostname}: {e}')
@@ -47,7 +47,8 @@ def setup_https_connection(hostname):
                 logger.info(f'Retrying... ({attempt + 1}/{retries})')
                 sleep(2)
             else:
-                return None
+                logger.error(f'Failed to establish connection to {hostname} after {retries} attempts')
+                return
 
 
 def send_request(connection, method, url, headers, body=None):
@@ -81,7 +82,8 @@ def send_request(connection, method, url, headers, body=None):
                 logger.info(f'Retrying... ({attempt + 1}/{retries})')
                 sleep(2)
             else:
-                return None
+                logger.error(f'Failed to send {method} request to {url} after {retries} attempts')
+                return
 
     
 def get_custom_devices(connection, hostname, api_key, include_criteria = False):
@@ -112,10 +114,10 @@ def get_custom_devices(connection, hostname, api_key, include_criteria = False):
             custom_devices = json.loads(response_body)
             return custom_devices
         elif response and response.status in [401, 402, 404]:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return
         else:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return
     except Exception as e:
         logger.error(f'Exception occurred while retrieving custom devices: {e}')
@@ -155,10 +157,10 @@ def search_device(connection, api_key, device_name):
             device_information = json.loads(response_body)
             return device_information
         elif response and response.status in [401, 402]:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return
         else:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return
     except Exception as e:
         logger.error(f'Exception occurred while retrieving device: {e}')
@@ -204,10 +206,10 @@ def metric_query(connection, api_key, device_id):
             device_metrics = json.loads(response_body)
             return device_metrics
         elif response.status in [400, 401, 402]:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return
         else:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return 
     except Exception as e:
         logger.error(f'Exception occurred while retrieving metrics: {e}')
@@ -233,14 +235,15 @@ def create_custom_device(connection, api_key, payload):
         url = '/api/v1/customdevices'
         headers = {'accept': 'application/json', 'Authorization': f'ExtraHop apikey={api_key}', 'Content-Type': 'application/json'}
         response = send_request(connection, 'POST', url, headers, body=json.dumps(payload))
+        response_body =response.read()
         if response and response.status == 201:
             logger.info(f'{response.status}: Custom device successfully created.')
             return
         elif response and response.status in [400, 401, 402]:
-            logger.error(f'{response.status}: {response.reason}')
-            return response 
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
+            return response_body
         else:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return
     except Exception as e:
         logger.error(f'Exception occured while creating custom device: {e}')
@@ -271,10 +274,10 @@ def patch_custom_device(connection, api_key, device_id, payload):
             logger.info(f'{response.status}: Custom device successfully patched.')
             return
         elif response and response.status in [401, 402, 404]:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return 
         else:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return
     except Exception as e:
         logger.error(f'Exception occurred while creating custom device: {e}')
@@ -293,10 +296,10 @@ def delete_custom_device(connection, api_key, hostname, id):
             logger.info(f'{response.status}: Custom device {id} successfully deleted.')
             return
         elif response and response.status in [401, 402, 404]:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return
         else:
-            logger.error(f'{response.status}: {response.reason}')
+            logger.error(f'{response.status}: {response.reason}: {response.read()}')
             return
     except Exception as e:
         logger.error(f'Exception occurred while deleting custom device: {e}')
@@ -393,10 +396,8 @@ def create_custom_devices_from_csv(connection, hostname, api_key, custom_devices
     Returns:
     None
     """
-    if patch == True:
-        global confirm_all_patches
-    
-    custom_devices = get_custom_devices(connection, hostname, api_key, verbose = True)
+    custom_devices = get_custom_devices(connection, hostname, api_key, True)
+
     with open(custom_devices_csv, mode='r') as csv_file:
         new_devices = list(csv.DictReader(csv_file))
 
@@ -422,36 +423,75 @@ def create_custom_devices_from_csv(connection, hostname, api_key, custom_devices
             "name": device_payload['name'],
             "author": device_payload['author'],
             "description": device_payload['description'],
-            "disabled": device_payload['disabled'],
+            "disabled": bool(device_payload['disabled']),
             "criteria": device_payload['criteria']
         }
         logger.info(f'Creating device: {device_payload['name']}')
         response = create_custom_device(connection, api_key, final_payload)
+        logger.debug(f'Response: {response}')
 
-        if response.reason['detail'] == f'A custom device with the name {name} already exists' and patch == True:
-            user_input = ''
-            valid_options = ['yes', 'no', 'all']
-            while user_input not in valid_options:
-                user_input = input(f'Do you want to patch the device "{name}"? (yes/no/all): ').strip().lower()
-                if user_input not in valid_options:
-                    logger.warning(f"Invalid input. Please enter one of the following: {', '.join(valid_options)}")
+        if response:
+            parsed_response = json.loads(response)
+            logger.debug(f'Parsed response: {parsed_response}')
+            if parsed_response['detail'].strip() == f'A custom device with the name {name} already exists.'.strip() and patch == True:
+                logger.debug('patching...')
+                user_input = ''
+                valid_options = ['yes', 'no', 'all']
+                confirm_all_patches = False
+                while user_input not in valid_options:
+                    user_input = input(f'Do you want to patch the device "{name}"? (yes/no/all): ').strip().lower()
+                    if user_input not in valid_options:
+                        logger.warning(f"Invalid input. Please enter one of the following: {', '.join(valid_options)}")
 
-            if user_input == 'no':
-                logger.info(f'Skipping patch for device {name}.')
-                continue
-            elif user_input == 'all':
-                confirm_all_patches = True
+                if user_input == 'no':
+                    logger.info(f'Skipping patch for device {name}.')
+                    continue
+                elif user_input == 'all':
+                    confirm_all_patches = True
 
-            if confirm_all_patches or user_input == 'yes':
-                device_id = custom_devices[f'{name}']['id']
-                patch_custom_device(connection, api_key, device_id, final_payload)
+                if confirm_all_patches or user_input == 'yes':
+                    logger.debug(custom_devices)
+                    for custom_device in custom_devices:
+                        if custom_device.get('name','') == name:
+                            device_id = custom_device.get('id','')
+                            logger.debug(device_id)
+                            patch_custom_device(connection, api_key, device_id, final_payload)
 
 
 def delete_custom_devices_from_csv(connection, hostname, api_key, custom_devices_csv):
+    """
+    Delete custom devices specified in a CSV file from the ExtraHop platform.
 
-    custom_devices = get_custom_devices(connection, hostname, api_key, verbose = True)
+    This function reads a CSV file containing custom device names, retrieves the list of
+    existing custom devices from the ExtraHop platform, and deletes the devices that
+    match the names in the CSV file.
+
+    Parameters:
+    connection (http.client.HTTPSConnection): The established HTTPS connection to the appliance.
+    hostname (str): The hostname of the ExtraHop appliance.
+    api_key (str): The API key for authentication with the ExtraHop appliance.
+    custom_devices_csv (str): The path to the CSV file containing the names of custom devices to be deleted.
+
+    Returns:
+    None
+
+    Note:
+    The CSV file should have a 'name' column containing the names of the custom devices to be deleted.
+    The function will log debug information and use the delete_custom_device function to remove each device.
+    """
+    custom_devices = get_custom_devices(connection, hostname, api_key, True)
+
     with open(custom_devices_csv, mode='r') as csv_file:
-        custom_devices = list(csv.DictReader(csv_file))
+        custom_devices_to_be_deleted = list(csv.DictReader(csv_file))
+
+    for custom_device_to_be_deleted in custom_devices_to_be_deleted:
+        name = custom_device_to_be_deleted.get('name', '')
+        if name:
+            for custom_device in custom_devices:
+                if custom_device.get('name','') == name:
+                    device_id = custom_device.get('id','')
+                    logger.debug(device_id)
+                    delete_custom_device(connection, api_key, hostname, device_id)
 
 def main():
     logger.info('Initializing Custom Device Manager...')
@@ -479,14 +519,16 @@ def main():
     logger.debug(f'Patch: {args.patch}')
 
     if args.appliances:
+        logger.info(f'Reading {args.appliances}...')
         with open(args.appliances, mode = 'r') as csv_file:
             appliances = list(csv.DictReader(csv_file))
+            logger.debug(f'{appliances}')
 
         for appliance in appliances:
             hostname = appliance.get('hostname')
+            logger.info(f'Processing tasks on appliance: {hostname}')
             api_key = appliance.get('api_key')
             if hostname and api_key:
-                logger.info(f'Processing tasks on appliance: {hostname}')
                 connection = setup_https_connection(hostname)
                 if connection and args.audit:
                     audit_custom_devices(
