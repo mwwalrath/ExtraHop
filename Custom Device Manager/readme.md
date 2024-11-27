@@ -94,7 +94,7 @@ The CSV should include the following headers:
 | hostname    | api_key |
 |-------------|---------|
 
-#### Custom Devices CSV:
+#### Custom Devices CSV (Create/Patch:
 
 The CSV should include the following headers:
 
@@ -105,6 +105,13 @@ Criteria should include one or more of the following fields
 
 | ipaddr_direction | ipaddr_peer | src_port_min | src_port_max | dst_port_min | dst_port_max | vlan_min | vlan_max |
 |------------------|-------------|--------------|--------------|--------------|--------------|----------|----------|
+
+#### Custom Devices CSV (Delete):
+
+The CSV should include the following header:
+
+| name |
+|------|
 
 ## Error Handling
 
