@@ -10,7 +10,7 @@ The script logs detailed information about operations, with robust error-handlin
 
 - **Audit Custom Devices:** Retrieve and export details of existing custom devices from ExtraHop appliances.
 - **Search for Devices:** Search for devices by name using the ExtraHop REST API.
-- **Metric Querying:** Query metrics for a specific device.
+- **Metric Querying:** Query bytes for custom devices.
 - **Create Custom Devices:** Create custom devices on ExtraHop appliances using data from a CSV file.
 - **Patch Custom Devices:** Update existing custom devices if they already exist (supports user confirmation or batch updating).
 - **Delete Custom Devices:** Delete custom devices based on data from a CSV file.
