@@ -30,8 +30,8 @@ try:
     logger.info('Attempting to update password')
     connection = http.client.HTTPSConnection(eh_host, 443, context=ssl._create_unverified_context())
     headers = {'accept': 'application/json', 'Authorization': f'ExtraHop apikey={api_key}', 'Content-Type': 'application/json'}
-    payload = {'name': 'setup','password': password}
-    connection.request('PATCH', '/api/v1/users', headers=headers, body=json.dumps(payload))
+    payload = {'password': password}
+    connection.request('PATCH', '/api/v1/users/setup', headers=headers, body=json.dumps(payload))
     response = connection.getresponse()
     if response.status == 204:
         logger.info(f'{response.status}: User successfully updated.')
