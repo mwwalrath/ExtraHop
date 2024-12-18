@@ -15,8 +15,8 @@ try:
     if response.status == 204:
         print(f'{response.status}: User successfully updated.')
     elif response.status == 401:
-        print.error(f'{response.status}: API key is missing or invalid.')
+        print(f'{response.status}: API key is missing or invalid.')
     elif response.status == 402:
-        print.error(f'{response.status}: The EULA has not been accepted for this appliance.')
+        print(f'{response.status}: The EULA has not been accepted for this appliance.')
 except Exception as e:
     print(f'Exception occured while retrieving users: {e}')
