@@ -12,9 +12,9 @@ import logging
 from datetime import datetime
 import os
 
-eh_host = 'string'
-api_key = 'string'
-password = 'string'
+eh_host = 'eh_host'
+api_key = 'ap_key'
+password = 'password'
 
 # Set up logging
 
