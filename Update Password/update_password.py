@@ -1,3 +1,10 @@
+#!/usr/bin/python3
+
+# COPYRIGHT 2024 BY EXTRAHOP NETWORKS, INC.
+#
+# This file is subject to the terms and conditions defined in
+# file 'LICENSE', which is part of this source code package.
+
 import http.client
 import json
 import ssl
