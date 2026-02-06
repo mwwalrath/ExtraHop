@@ -145,6 +145,117 @@ def _open_csv(path):
     return open(path, mode='r', encoding='utf-8-sig', newline='')
 
 
+# Criteria field names expected by the ExtraHop API.
+CRITERIA_KEYS = [
+    'ipaddr', 'ipaddr_direction', 'ipaddr_peer',
+    'src_port_min', 'src_port_max',
+    'dst_port_min', 'dst_port_max',
+    'vlan_min', 'vlan_max'
+]
+INT_KEYS = {'vlan_min', 'vlan_max', 'dst_port_min', 'dst_port_max',
+            'src_port_min', 'src_port_max'}
+PORT_KEYS = {'src_port_min', 'src_port_max', 'dst_port_min', 'dst_port_max'}
+
+
+def _parse_criteria_from_row(row, device_name):
+    """
+    Parse a single CSV row into a criteria dict.
+
+    Returns an empty dict if no criteria fields have values.
+    """
+    criteria = {}
+    for key in CRITERIA_KEYS:
+        val = row.get(key, '').strip()
+        if val:
+            if key in INT_KEYS:
+                try:
+                    int_val = int(val)
+                except ValueError:
+                    logger.warning(f'Invalid integer for {key}={val} on device '
+                                   f'{device_name}. Skipping field.')
+                    continue
+                if key in PORT_KEYS and not (1 <= int_val <= 65535):
+                    logger.warning(f'Port value out of range for {key}={int_val} '
+                                   f'on device {device_name}. Must be 1-65535. '
+                                   f'Skipping field.')
+                    continue
+                criteria[key] = int_val
+            else:
+                criteria[key] = val
+
+    # Validate ipaddr_peer constraint
+    if 'ipaddr_peer' in criteria:
+        if 'ipaddr' not in criteria:
+            logger.warning(f'ipaddr_peer specified without ipaddr on device '
+                           f'{device_name}. Removing ipaddr_peer.')
+            del criteria['ipaddr_peer']
+        elif criteria.get('ipaddr_direction') == 'any':
+            logger.warning(f'ipaddr_peer is not valid when ipaddr_direction '
+                           f'is "any" on device {device_name}. Removing '
+                           f'ipaddr_peer.')
+            del criteria['ipaddr_peer']
+
+    return criteria
+
+
+def _parse_csv_to_device_map(csv_path):
+    """
+    Parse a CSV file into a dict of {device_name: device_payload}.
+
+    Each device payload has name, author, description, disabled, and a
+    criteria list built by merging all rows with the same name.
+
+    Returns:
+        dict: {name: {name, author, description, disabled, criteria: [...], ...}}
+    """
+    with _open_csv(csv_path) as csv_file:
+        rows = list(csv.DictReader(csv_file))
+
+    if not rows:
+        logger.warning(f'No devices found in {csv_path}. Nothing to do.')
+        return {}
+
+    processed = {}
+    for row in rows:
+        name = row.get('name', '').strip()
+        if not name:
+            logger.warning(f'Skipping row with empty name: {row}')
+            continue
+
+        if name not in processed:
+            device_entry = {
+                'name': name,
+                'author': row.get('author', 'API Automation').strip() or 'API Automation',
+                'description': row.get('description', '').strip(),
+                'disabled': row.get('disabled', 'false').strip().lower() == 'true',
+                'criteria': []
+            }
+            extrahop_id = row.get('extrahop_id', '').strip()
+            if extrahop_id:
+                device_entry['extrahop_id'] = extrahop_id
+            processed[name] = device_entry
+
+        criteria = _parse_criteria_from_row(row, name)
+        if criteria:
+            processed[name]['criteria'].append(criteria)
+
+    return processed
+
+
+def _criteria_match(existing, target):
+    """
+    Check if an existing criteria dict matches a target for removal.
+
+    A match means every field present in target has the same value in
+    existing. This lets the CSV specify just ipaddr to remove a criteria
+    without listing every field.
+    """
+    for key, val in target.items():
+        if existing.get(key) != val:
+            return False
+    return True
+
+
 def get_custom_devices(conn, api_key, include_criteria=False):
     """
     Retrieves all custom devices from the appliance.
@@ -481,83 +592,9 @@ def create_custom_devices_from_csv(conn, api_key, custom_devices_csv,
         if cd_name and 'id' in cd:
             custom_devices_lookup[cd_name] = cd['id']
 
-    with _open_csv(custom_devices_csv) as csv_file:
-        new_devices = list(csv.DictReader(csv_file))
-
-    if not new_devices:
-        logger.warning(f'No devices found in {custom_devices_csv}. Nothing to do.')
+    processed_devices = _parse_csv_to_device_map(custom_devices_csv)
+    if not processed_devices:
         return
-
-    # Group CSV rows by device name, merging criteria into a list
-    processed_devices = {}
-    criteria_keys = [
-        'ipaddr', 'ipaddr_direction', 'ipaddr_peer',
-        'src_port_min', 'src_port_max',
-        'dst_port_min', 'dst_port_max',
-        'vlan_min', 'vlan_max'
-    ]
-    int_keys = {'vlan_min', 'vlan_max', 'dst_port_min', 'dst_port_max',
-                'src_port_min', 'src_port_max'}
-    port_keys = {'src_port_min', 'src_port_max', 'dst_port_min', 'dst_port_max'}
-
-    for new_device in new_devices:
-        name = new_device.get('name', '').strip()
-        if not name:
-            logger.warning(f'Skipping row with empty name: {new_device}')
-            continue
-
-        if name not in processed_devices:
-            device_entry = {
-                'name': name,
-                'author': new_device.get('author', 'API Automation').strip() or 'API Automation',
-                'description': new_device.get('description', '').strip(),
-                'disabled': new_device.get('disabled', 'false').strip().lower() == 'true',
-                'criteria': []
-            }
-            # Optional: extrahop_id sets a custom unique ID for the device.
-            # If omitted, the API auto-generates one from the device name.
-            # Cannot be changed after creation.
-            extrahop_id = new_device.get('extrahop_id', '').strip()
-            if extrahop_id:
-                device_entry['extrahop_id'] = extrahop_id
-
-            processed_devices[name] = device_entry
-
-        # Build criteria dict from non-empty values
-        criteria = {}
-        for key in criteria_keys:
-            val = new_device.get(key, '').strip()
-            if val:
-                if key in int_keys:
-                    try:
-                        int_val = int(val)
-                    except ValueError:
-                        logger.warning(f'Invalid integer for {key}={val} on device '
-                                       f'{name}. Skipping field.')
-                        continue
-                    # API spec: port values must be 1-65535
-                    if key in port_keys and not (1 <= int_val <= 65535):
-                        logger.warning(f'Port value out of range for {key}={int_val} '
-                                       f'on device {name}. Must be 1-65535. Skipping field.')
-                        continue
-                    criteria[key] = int_val
-                else:
-                    criteria[key] = val
-
-        # Validate ipaddr_peer constraint: only valid when ipaddr is set
-        # and ipaddr_direction is not "any"
-        if 'ipaddr_peer' in criteria:
-            if 'ipaddr' not in criteria:
-                logger.warning(f'ipaddr_peer specified without ipaddr on device '
-                               f'{name}. Removing ipaddr_peer.')
-                del criteria['ipaddr_peer']
-            elif criteria.get('ipaddr_direction') == 'any':
-                logger.warning(f'ipaddr_peer is not valid when ipaddr_direction '
-                               f'is "any" on device {name}. Removing ipaddr_peer.')
-                del criteria['ipaddr_peer']
-
-        if criteria:
-            processed_devices[name]['criteria'].append(criteria)
 
     # Track whether the user chose "all" for patching across all devices
     confirm_all_patches = auto_yes
@@ -638,6 +675,206 @@ def create_custom_devices_from_csv(conn, api_key, custom_devices_csv,
             summary.failed += 1
 
 
+def patch_add_from_csv(conn, api_key, csv_path, summary,
+                       auto_yes=False, dry_run=False):
+    """
+    Appends criteria from a CSV to existing custom devices.
+
+    For each device in the CSV, fetches the device's current criteria from
+    the appliance, adds any new criteria from the CSV that aren't already
+    present, and PATCHes the device with the combined list.
+
+    Parameters:
+        conn (ConnectionManager): The connection manager.
+        api_key (str): The API key for authentication.
+        csv_path (str): Path to the CSV file with criteria to add.
+        summary (RunSummary): The run summary tracker.
+        auto_yes (bool): If True, skip interactive prompts.
+        dry_run (bool): If True, log what would happen without making changes.
+    """
+    logger.info(f'Appending criteria from {csv_path} to existing devices...')
+    custom_devices = get_custom_devices(conn, api_key, include_criteria=True)
+    if not custom_devices:
+        logger.warning(f'No custom devices found on {conn.hostname}. '
+                       f'Nothing to append to.')
+        return
+
+    # Build lookups by name
+    devices_by_name = {}
+    for cd in custom_devices:
+        cd_name = cd.get('name', '')
+        if cd_name and 'id' in cd:
+            devices_by_name[cd_name] = cd
+
+    csv_devices = _parse_csv_to_device_map(csv_path)
+    if not csv_devices:
+        return
+
+    confirm_all = auto_yes
+
+    for name, csv_payload in csv_devices.items():
+        existing = devices_by_name.get(name)
+        if not existing:
+            logger.info(f'Device {name} not found on appliance. Skipping.')
+            summary.skipped += 1
+            continue
+
+        device_id = existing['id']
+        existing_criteria = existing.get('criteria', [])
+        new_criteria = csv_payload.get('criteria', [])
+
+        # Deduplicate: only add criteria not already present
+        to_add = []
+        for nc in new_criteria:
+            already_exists = any(
+                _criteria_match(ec, nc) and _criteria_match(nc, ec)
+                for ec in existing_criteria
+            )
+            if already_exists:
+                logger.info(f'Criteria already exists on {name}, skipping: {nc}')
+            else:
+                to_add.append(nc)
+
+        if not to_add:
+            logger.info(f'No new criteria to add for {name}. Skipping.')
+            summary.skipped += 1
+            continue
+
+        combined = existing_criteria + to_add
+
+        if not confirm_all:
+            valid_options = ['yes', 'no', 'all']
+            user_input = ''
+            while user_input not in valid_options:
+                user_input = input(
+                    f'Add {len(to_add)} criteria to "{name}" '
+                    f'({len(existing_criteria)} existing)? (yes/no/all): '
+                ).strip().lower()
+                if user_input not in valid_options:
+                    print(f"Invalid input. Choose one of: {', '.join(valid_options)}")
+            if user_input == 'no':
+                logger.info(f'Skipping append for device {name}.')
+                summary.skipped += 1
+                continue
+            elif user_input == 'all':
+                confirm_all = True
+
+        logger.info(f'Appending {len(to_add)} criteria to {name} '
+                     f'({len(existing_criteria)} existing -> '
+                     f'{len(combined)} total)')
+
+        patch_payload = {'criteria': combined}
+        result = patch_custom_device(
+            conn, api_key, device_id, patch_payload, dry_run=dry_run
+        )
+        if result:
+            summary.patched += 1
+        else:
+            summary.failed += 1
+
+
+def patch_remove_from_csv(conn, api_key, csv_path, summary,
+                          auto_yes=False, dry_run=False):
+    """
+    Removes criteria from existing custom devices based on a CSV.
+
+    For each device in the CSV, fetches the device's current criteria from
+    the appliance, removes any criteria that match the CSV rows, and PATCHes
+    the device with the remaining list.
+
+    A match means every field in the CSV row equals the same field in the
+    existing criteria. You can specify just ipaddr to match any criteria
+    with that IP, or include more fields for a tighter match.
+
+    Parameters:
+        conn (ConnectionManager): The connection manager.
+        api_key (str): The API key for authentication.
+        csv_path (str): Path to the CSV file with criteria to remove.
+        summary (RunSummary): The run summary tracker.
+        auto_yes (bool): If True, skip interactive prompts.
+        dry_run (bool): If True, log what would happen without making changes.
+    """
+    logger.info(f'Removing criteria from {csv_path} from existing devices...')
+    custom_devices = get_custom_devices(conn, api_key, include_criteria=True)
+    if not custom_devices:
+        logger.warning(f'No custom devices found on {conn.hostname}. '
+                       f'Nothing to remove from.')
+        return
+
+    devices_by_name = {}
+    for cd in custom_devices:
+        cd_name = cd.get('name', '')
+        if cd_name and 'id' in cd:
+            devices_by_name[cd_name] = cd
+
+    csv_devices = _parse_csv_to_device_map(csv_path)
+    if not csv_devices:
+        return
+
+    confirm_all = auto_yes
+
+    for name, csv_payload in csv_devices.items():
+        existing = devices_by_name.get(name)
+        if not existing:
+            logger.info(f'Device {name} not found on appliance. Skipping.')
+            summary.skipped += 1
+            continue
+
+        device_id = existing['id']
+        existing_criteria = existing.get('criteria', [])
+        remove_targets = csv_payload.get('criteria', [])
+
+        # Find which existing criteria match a removal target
+        remaining = []
+        removed = []
+        for ec in existing_criteria:
+            matched = any(_criteria_match(ec, rt) for rt in remove_targets)
+            if matched:
+                removed.append(ec)
+            else:
+                remaining.append(ec)
+
+        if not removed:
+            logger.info(f'No matching criteria to remove for {name}. Skipping.')
+            summary.skipped += 1
+            continue
+
+        if not confirm_all:
+            valid_options = ['yes', 'no', 'all']
+            user_input = ''
+            while user_input not in valid_options:
+                user_input = input(
+                    f'Remove {len(removed)} criteria from "{name}" '
+                    f'({len(existing_criteria)} existing -> '
+                    f'{len(remaining)} remaining)? (yes/no/all): '
+                ).strip().lower()
+                if user_input not in valid_options:
+                    print(f"Invalid input. Choose one of: {', '.join(valid_options)}")
+            if user_input == 'no':
+                logger.info(f'Skipping removal for device {name}.')
+                summary.skipped += 1
+                continue
+            elif user_input == 'all':
+                confirm_all = True
+
+        logger.info(f'Removing {len(removed)} criteria from {name} '
+                     f'({len(existing_criteria)} existing -> '
+                     f'{len(remaining)} remaining)')
+
+        if not remaining:
+            logger.warning(f'All criteria would be removed from {name}. '
+                           f'The device will have no filter criteria.')
+
+        patch_payload = {'criteria': remaining}
+        result = patch_custom_device(
+            conn, api_key, device_id, patch_payload, dry_run=dry_run
+        )
+        if result:
+            summary.patched += 1
+        else:
+            summary.failed += 1
+
+
 def delete_custom_devices_from_csv(conn, api_key, custom_devices_csv,
                                    summary, dry_run=False):
     """
@@ -693,7 +930,14 @@ def main():
                         help='Path to CSV file containing custom devices to delete')
     parser.add_argument('--patch', action='store_true',
                         help='If enabled, overwrite existing custom devices '
-                             'when found')
+                             'when found (replaces all criteria)')
+    parser.add_argument('--patch-add', type=str, default=None,
+                        help='Path to CSV file with criteria to append to '
+                             'existing devices (does not replace existing '
+                             'criteria)')
+    parser.add_argument('--patch-remove', type=str, default=None,
+                        help='Path to CSV file with criteria to remove from '
+                             'existing devices')
     parser.add_argument('--yes', action='store_true',
                         help='Skip interactive prompts and auto-confirm all '
                              'patch operations')
@@ -724,14 +968,17 @@ def main():
     logger.info('Parsing arguments...')
     logger.debug(f'Args: {vars(args)}')
 
-    if not any([args.audit, args.create, args.delete]):
+    if not any([args.audit, args.create, args.delete,
+                args.patch_add, args.patch_remove]):
         parser.error('At least one action is required: --audit, --create, '
-                     'or --delete')
+                     '--delete, --patch-add, or --patch-remove')
 
     # Validate file paths before doing anything
     for path_arg, label in [(args.appliances, '--appliances'),
                             (args.create, '--create'),
-                            (args.delete, '--delete')]:
+                            (args.delete, '--delete'),
+                            (args.patch_add, '--patch-add'),
+                            (args.patch_remove, '--patch-remove')]:
         if path_arg and not os.path.isfile(path_arg):
             parser.error(f'{label} file not found: {path_arg}')
 
@@ -774,6 +1021,18 @@ def main():
             create_custom_devices_from_csv(
                 conn, api_key, args.create, summary,
                 patch=args.patch,
+                auto_yes=args.yes,
+                dry_run=args.dry_run
+            )
+        if args.patch_add:
+            patch_add_from_csv(
+                conn, api_key, args.patch_add, summary,
+                auto_yes=args.yes,
+                dry_run=args.dry_run
+            )
+        if args.patch_remove:
+            patch_remove_from_csv(
+                conn, api_key, args.patch_remove, summary,
                 auto_yes=args.yes,
                 dry_run=args.dry_run
             )
