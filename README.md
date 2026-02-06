@@ -143,7 +143,7 @@ The script supports three distinct ways to update device criteria:
 
     This command will delete custom devices listed in `custom_devices_to_delete.csv`.
 
-### Typical Workflow: Adding a Subnet to ~1,300 Devices
+### Typical Workflow: Adding a Subnet to Custom Devices
 
 ```sh
 # 1. Snapshot current state
