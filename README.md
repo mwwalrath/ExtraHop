@@ -57,6 +57,8 @@ The script is used to audit and manage custom devices on ExtraHop appliances. It
 | `--dry-run`          | Log what would happen without making any changes to the appliance.                          |
 | `--delete`           | Path to the CSV file containing custom devices to be deleted.                               |
 | `--output-dir`       | Directory to write output files into (default: current directory).                          |
+| `--metric-window`    | Metric lookback window in days (default: 14). Used with `--include_metrics`.                |
+| `--no-verify-ssl`    | Disable SSL certificate verification. Required for self-signed certificates.                |
 | `--log-level`        | Set the logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Defaults to `INFO`.|
 
 ### Patch Modes Compared
@@ -264,7 +266,25 @@ The script uses only Python standard library modules:
 - **http.client**: To interact with the ExtraHop REST API.
 - **csv**: For handling CSV files used to store and retrieve appliance and custom device information.
 - **logging**: For logging the execution details and errors.
-- **ssl**: To create unverified SSL contexts for HTTPS connections.
+- **ssl**: To manage SSL/TLS contexts for HTTPS connections (verifies certificates by default).
+
+## SSL Certificate Verification
+
+By default the script verifies SSL certificates when connecting to ExtraHop appliances. Many deployments use self-signed certificates, so you can disable verification with `--no-verify-ssl`:
+
+```sh
+python custom_device_manager.py --appliances appliances.csv --audit --no-verify-ssl
+```
+
+## Testing
+
+The project includes unit tests for the core parsing and matching logic. Run them with:
+
+```sh
+python -m pytest test_custom_device_manager.py -v
+```
+
+No ExtraHop appliance is needed to run the tests.
 
 ## Disclaimer
 
