@@ -8,23 +8,43 @@ import os
 import ssl
 from time import sleep
 
-# Set up logging
+# Module-level logger. Handlers are attached in setup_logging() so this
+# module can be imported as a library without side effects.
+logger = logging.getLogger(__name__)
+_console_handler = None
 
-current_datetime = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
-log_folder = 'logs'
-os.makedirs(log_folder, exist_ok=True)
-log_filename = f'custom_device_manager_log_{current_datetime}'
-log_file = os.path.join(log_folder, log_filename)
-logging.basicConfig(filename=f'{log_file}.log',
-                    format='[%(asctime)s] %(levelname)s: %(message)s',
-                    filemode='w',
-                    level=logging.INFO)
-logger = logging.getLogger()
 
-# Also log to console so the user sees what's happening
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
-logger.addHandler(console_handler)
+def setup_logging(log_level='INFO'):
+    """
+    Configure file and console logging. Call once from main().
+
+    Returns the console handler so the caller can adjust its level later.
+    """
+    global _console_handler
+
+    current_datetime = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
+    log_folder = 'logs'
+    os.makedirs(log_folder, exist_ok=True)
+    log_file = os.path.join(
+        log_folder, f'custom_device_manager_log_{current_datetime}.log'
+    )
+
+    file_handler = logging.FileHandler(log_file, mode='w')
+    file_handler.setFormatter(
+        logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s')
+    )
+
+    _console_handler = logging.StreamHandler()
+    _console_handler.setFormatter(
+        logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s')
+    )
+
+    logger.addHandler(file_handler)
+    logger.addHandler(_console_handler)
+    logger.setLevel(log_level.upper())
+    _console_handler.setLevel(log_level.upper())
+
+    return _console_handler
 
 
 class ConnectionManager:
@@ -34,10 +54,17 @@ class ConnectionManager:
     connection transparently when a request fails mid-run.
     """
 
-    def __init__(self, hostname, max_retries=3, timeout=10):
+    def __init__(self, hostname, max_retries=3, timeout=10, verify_ssl=True):
         self.hostname = hostname
         self.max_retries = max_retries
         self.timeout = timeout
+        self.verify_ssl = verify_ssl
+
+        if verify_ssl:
+            self._ssl_context = ssl.create_default_context()
+        else:
+            self._ssl_context = ssl._create_unverified_context()
+
         self._connection = None
 
     def _connect(self):
@@ -45,7 +72,7 @@ class ConnectionManager:
         logger.debug(f'Opening HTTPS connection to {self.hostname}')
         self._connection = http.client.HTTPSConnection(
             self.hostname, 443, timeout=self.timeout,
-            context=ssl._create_unverified_context()
+            context=self._ssl_context
         )
         return self._connection
 
@@ -294,6 +321,9 @@ def search_device(conn, api_key, device_name):
     """
     Searches for a device by name on the ExtraHop appliance.
 
+    Used internally by audit_custom_devices to look up the L2/L3 device
+    record that backs a custom device, which is needed to query metrics.
+
     Returns:
         list: A list of matching device dicts, or an empty list on failure.
     """
@@ -326,9 +356,19 @@ def search_device(conn, api_key, device_name):
         return []
 
 
-def metric_query(conn, api_key, device_id):
+def metric_query(conn, api_key, device_id, metric_window_ms=-1209600000):
     """
-    Performs a metric query on a device using the ExtraHop API.
+    Queries total bytes (net:bytes) for a device over a time window.
+
+    Used internally by audit_custom_devices when --include_metrics is set.
+    Returns raw metric data from the ExtraHop /api/v1/metrics endpoint.
+
+    Parameters:
+        conn (ConnectionManager): The connection manager.
+        api_key (str): The API key for authentication.
+        device_id: The device ID to query.
+        metric_window_ms (int): Negative millisecond offset from now.
+            Default is -1209600000 (14 days).
 
     Returns:
         dict or None: The metrics data, or None on failure.
@@ -343,7 +383,7 @@ def metric_query(conn, api_key, device_id):
         }
         payload = {
             'cycle': 'auto',
-            'from': -1209600000,
+            'from': metric_window_ms,
             'until': 0,
             'object_type': 'device',
             'object_ids': [device_id],
@@ -474,7 +514,7 @@ def delete_custom_device(conn, api_key, device_id, dry_run=False):
 
 def audit_custom_devices(conn, api_key, summary, output_dir=None,
                          verbose=False, include_criteria=False,
-                         include_metrics=False):
+                         include_metrics=False, metric_window_ms=-1209600000):
     """
     Retrieves custom devices from ExtraHop and writes them to a CSV file.
 
@@ -486,6 +526,7 @@ def audit_custom_devices(conn, api_key, summary, output_dir=None,
         verbose (bool): Include additional detail columns.
         include_criteria (bool): Include device criteria columns.
         include_metrics (bool): Include device metric columns.
+        metric_window_ms (int): Negative ms offset for metric lookback.
     """
     logger.info(f'Auditing appliance: {conn.hostname}')
     custom_devices = get_custom_devices(conn, api_key, include_criteria)
@@ -493,7 +534,12 @@ def audit_custom_devices(conn, api_key, summary, output_dir=None,
         logger.warning(f'No custom devices found on {conn.hostname}. Skipping audit.')
         return
 
-    csv_filename = f'custom_devices_audit_{conn.hostname}.csv'
+    # Sanitize hostname for safe use in filename
+    safe_hostname = ''.join(
+        c if c.isalnum() or c in ('-', '.', '_') else '_'
+        for c in conn.hostname
+    )
+    csv_filename = f'custom_devices_audit_{safe_hostname}.csv'
     if output_dir:
         csv_filename = os.path.join(output_dir, csv_filename)
 
@@ -546,7 +592,8 @@ def audit_custom_devices(conn, api_key, summary, output_dir=None,
                     device_bytes = 0
                     for dev in device_info:
                         if dev.get('role', '') == 'custom':
-                            device_metrics = metric_query(conn, api_key, dev.get('id', ''))
+                            device_metrics = metric_query(conn, api_key, dev.get('id', ''),
+                                                              metric_window_ms=metric_window_ms)
                             if device_metrics and 'stats' in device_metrics:
                                 for stat in device_metrics['stats']:
                                     values = stat.get('values', [])
@@ -919,7 +966,6 @@ def delete_custom_devices_from_csv(conn, api_key, custom_devices_csv,
 
 
 def main():
-    logger.info('Initializing Custom Device Manager...')
     parser = argparse.ArgumentParser(description='Manage ExtraHop Custom Devices')
     parser.add_argument('--appliances', type=str, required=True,
                         help='Path to CSV file containing appliance hostnames '
@@ -951,22 +997,35 @@ def main():
                         help='Include custom device criteria in audit output')
     parser.add_argument('--include_metrics', action='store_true',
                         help='Include custom device metrics in audit output')
+    parser.add_argument('--metric-window', type=int, default=14,
+                        help='Metric lookback window in days (default: 14)')
     parser.add_argument('--output-dir', type=str, default=None,
                         help='Directory to write output files into '
                              '(default: current directory)')
+    parser.add_argument('--no-verify-ssl', action='store_true',
+                        help='Disable SSL certificate verification. Required '
+                             'for appliances using self-signed certificates.')
     parser.add_argument('--log-level', type=str, default='INFO',
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         help='Set the logging level')
 
     args = parser.parse_args()
-    logger.setLevel(args.log_level.upper())
-    console_handler.setLevel(args.log_level.upper())
+
+    setup_logging(args.log_level)
+
+    logger.info('Initializing Custom Device Manager...')
+
+    if args.no_verify_ssl:
+        logger.warning('SSL certificate verification is disabled.')
 
     if args.dry_run:
         logger.info('[DRY RUN MODE] No changes will be made.')
 
-    logger.info('Parsing arguments...')
-    logger.debug(f'Args: {vars(args)}')
+    logger.debug(f'Args: audit={args.audit}, create={args.create}, '
+                 f'delete={args.delete}, patch={args.patch}, '
+                 f'patch_add={args.patch_add}, patch_remove={args.patch_remove}, '
+                 f'dry_run={args.dry_run}, verbose={args.verbose}, '
+                 f'log_level={args.log_level}')
 
     if not any([args.audit, args.create, args.delete,
                 args.patch_add, args.patch_remove]):
@@ -987,6 +1046,12 @@ def main():
         os.makedirs(args.output_dir, exist_ok=True)
         logger.info(f'Output directory: {args.output_dir}')
 
+    # Convert days to negative millisecond offset
+    if args.metric_window < 1:
+        parser.error('--metric-window must be at least 1 day')
+    metric_window_ms = -(args.metric_window * 86400000)
+
+    verify_ssl = not args.no_verify_ssl
     summary = RunSummary()
 
     logger.info(f'Reading {args.appliances}...')
@@ -1000,11 +1065,11 @@ def main():
 
         if not hostname or not api_key:
             logger.warning(f'Skipping appliance with missing hostname or '
-                           f'api_key: {appliance}')
+                           f'api_key: hostname={hostname!r}')
             continue
 
         logger.info(f'Processing tasks on appliance: {hostname}')
-        conn = ConnectionManager(hostname)
+        conn = ConnectionManager(hostname, verify_ssl=verify_ssl)
         if not conn.connect():
             logger.error(f'Could not connect to {hostname}. Skipping.')
             continue
@@ -1015,7 +1080,8 @@ def main():
                 output_dir=args.output_dir,
                 verbose=args.verbose,
                 include_criteria=args.include_criteria,
-                include_metrics=args.include_metrics
+                include_metrics=args.include_metrics,
+                metric_window_ms=metric_window_ms
             )
         if args.create:
             create_custom_devices_from_csv(
