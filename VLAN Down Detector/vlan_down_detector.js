@@ -29,6 +29,7 @@
 //  USER CONFIGURATION                                                                                                       //
 // ============================================================================================================================
 
+/** @type {'NPM' | 'NDR'} */
 const LICENSE_MODEL        = 'NPM'
 const DYNAMIC_VLAN         = true
 const API_ODS_TARGET       = 'EDA'
@@ -305,12 +306,14 @@ function fireDetection(vlan, count) {
         + '* **Sensor:** ' + HOSTNAME + '\n'
         + '* **Down cycles:** ' + count
         + ' (threshold: ' + DOWN_CYCLES_THRESHOLD + ')'
+    /** @type {'day'} */
+    const ttl = 'day'
     const opts = {
         title: title,
         description: desc,
         participants: [],
         identityKey: 'vlan_down_' + vlan,
-        identityTtl: 'day'
+        identityTtl: ttl
     }
     if (LICENSE_MODEL === 'NDR') {
         const past = Math.max(
