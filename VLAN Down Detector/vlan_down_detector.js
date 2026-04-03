@@ -3,8 +3,7 @@
 #                                                                                                                             #
   Trigger:      VLAN Down Detector                                                                                            #
   Version:      4.1.0                                                                                                         #
-  Author:       Mike Saur (ExtraHop Networks)                                                                                 #
-  Last Updated: Matthew Walrath (ExtraHop Networks)                                                                           #
+  Author:       Matthew Walrath (ExtraHop Networks)                                                                                 #
   Events:       TIMER_30SEC, REMOTE_RESPONSE, METRIC_RECORD_COMMIT                                                            #
 #                                                                                                                             #
   Detects when active VLANs stop transmitting packets. Discovers active VLANs                                                 #
