@@ -17,7 +17,7 @@ It answers a simple question: "Is every VLAN that should be on the wire still on
 
 ExtraHop doesn't have a built-in detection for data feed loss at the VLAN level. If a network TAP fails, a SPAN port drops, or a routing change silently removes a VLAN from the sensor's view, there's no native alert. This trigger fills that gap.
 
-For PNC, this runs as a **performance detection** (NPM mode) so it routes through their performance detection webhook, separate from the SOC/NDR pipeline.
+For [Customer], this runs as a **performance detection** (NPM mode) so it routes through their performance detection webhook, separate from the SOC/NDR pipeline.
 
 ---
 
@@ -260,7 +260,7 @@ Assume 3 active VLANs (100, 200, 300) and default settings.
 
 1. **Metric zero-value gap.** All ExtraHop metric types silently discard zero values. If `EMIT_ACTIVE_VLAN_METRIC` is enabled and all active VLANs disappear, the metric just stops appearing in dashboards rather than showing zero. The zero guard (`active.length > 0`) prevents a wasted API call but doesn't solve the underlying platform behavior.
 
-2. **Top-level metric only.** The active VLAN count is a top-level snapshot metric (`Network.metricAddSnap`), not a detail metric. It shows total count, not per-VLAN status. Per-VLAN dashboard tracking would require `Network.metricAddDetailSnap` with VLAN ID as the key. About 10 lines of code to add if PNC wants it.
+2. **Top-level metric only.** The active VLAN count is a top-level snapshot metric (`Network.metricAddSnap`), not a detail metric. It shows total count, not per-VLAN status. Per-VLAN dashboard tracking would require `Network.metricAddDetailSnap` with VLAN ID as the key. About 10 lines of code to add if [Customer] wants it.
 
 3. **Empty participants array.** The original trigger used `{ object: System.ipaddr, role: 'offender' }` as a participant, but this format is not documented in the API. The API docs only show `Flow.client.offender` style objects, which aren't available on TIMER_30SEC. Empty array is safe and documented. Worth testing in QA to see how the detection renders without a participant device.
 
@@ -280,16 +280,6 @@ Assume 3 active VLANs (100, 200, 300) and default settings.
 | 3.2.0 | Throttled discovery, zero-packet filtering, graduated risk scoring, VLAN exclusion, active VLAN metric |
 | 3.3.x | Functions at top, Session.increment for counters, advanced options documented, Markdown descriptions, 127-char width |
 | 4.0.0 | Major simplification (736 → 446 lines). Removed apiCall abstraction, sessionGetJson, debug step counter. Merged buildDescription into fireDetection. Pre-computed CFG_RANK. |
-| 4.1.0 | Pipe-delimited strings on MRC hot path. Zero JSON.parse/stringify in METRIC_RECORD_COMMIT. LICENSE_MODEL set to NPM for PNC performance detection webhook. Down counter expiry refresh fix (Session.replace instead of Session.increment). |
+| 4.1.0 | Pipe-delimited strings on MRC hot path. Zero JSON.parse/stringify in METRIC_RECORD_COMMIT. LICENSE_MODEL set to NPM for [Customer] performance detection webhook. Down counter expiry refresh fix (Session.replace instead of Session.increment). |
 
 ---
-
-## Files
-
-| File | Description |
-|------|-------------|
-| `VLAN_Down_Detector.js` | Trigger source code (457 lines, 127-char max width) |
-| `VLAN_Down_Detector_README.md` | This file |
-| `VLAN_Down_Detector_Technical_Brief_PNC.docx` | Formal technical brief for PNC stakeholder review |
-| `VLAN_Down_Detector_FlowChart_A4.png` | Logic flow chart (300 DPI, A4 landscape) |
-| `VLAN_Down_Detector_FlowChart_A4.svg` | Flow chart in SVG format |
