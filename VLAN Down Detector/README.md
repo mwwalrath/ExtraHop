@@ -31,7 +31,7 @@ VLANs are assigned to one of three tiers, each with independent thresholds and r
 | **standard** | 120 cycles (1 hour) | 120 cycles (1 hour) | Normal production VLANs (default for all discovered VLANs) |
 | **low_value** | 360 cycles (3 hours) | 360 cycles (3 hours) | VLANs with intermittent or low-frequency traffic |
 
-Tier resolution: if a VLAN is in `CRITICAL_VLAN_IDS`, it's critical. If it's in `LOW_VALUE_VLAN_IDS`, it's low_value. Everything else (including all dynamically discovered VLANs) is standard.
+Tier resolution: if a VLAN is in `CRITICAL_VLAN_IDS`, it's critical. If it's in `LOW_VALUE_VLAN_IDS`, it's low value. Everything else (including all dynamically discovered VLANs) is standard.
 
 Critical VLANs bypass the 7-day discovery check entirely and are always monitored, even before the first API discovery completes. `VLAN_EXCLUDE_IDS` overrides any tier.
 
