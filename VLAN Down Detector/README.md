@@ -230,17 +230,6 @@ Messages truncated at 1900 characters (ExtraHop 2048-byte log limit).
 
 ---
 
-## Files
-
-| File | Description |
-|------|-------------|
-| `VLAN_Down_Detector.js` | Trigger source code (588 lines, 127-char max width) |
-| `VLAN_Down_Detector_README.md` | This file |
-| `VLAN_Down_Detector_FlowChart_v5.0.0.svg` | Logic flow chart (SVG) |
-| `VLAN_Down_Detector_FlowChart_v5.0.0.png` | Logic flow chart (PNG, 2x scale) |
-
----
-
 ## Authors
 
 - **Matthew Walrath** — ExtraHop Networks
