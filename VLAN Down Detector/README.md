@@ -81,12 +81,6 @@ If a VLAN was counting up but hadn't reached its threshold yet, no recovery dete
 
 ---
 
-## Duration formatting
-
-Durations are displayed as human-readable strings with correct singular/plural: "5 minutes", "1 hour 30 minutes", "2 hours", "45 seconds". No approximate prefix since `count * 30` is exact. Seconds are dropped when hours are shown.
-
----
-
 ## Cold start behavior
 
 When the trigger is first enabled or restarted, a warm-up guard skips the first comparison cycle. This prevents every active VLAN from appearing "down" because no MRC traffic has been observed yet. Zero false detections on startup.
