@@ -2,24 +2,23 @@
 ###############################################################################################################################
 #                                                                                                                             #
   Trigger:      VLAN Down Detector                                                                                            #
-  Version:      4.1.0                                                                                                         #
-  Author:       Matthew Walrath (ExtraHop Networks)                                                                                 #
+  Version:      5.0.0                                                                                                         #
+  Contributor:  Matthew Walrath (ExtraHop Networks)                                                                           #
   Events:       TIMER_30SEC, REMOTE_RESPONSE, METRIC_RECORD_COMMIT                                                            #
 #                                                                                                                             #
-  Detects when active VLANs stop transmitting packets. Discovers active VLANs                                                 #
-  via the REST API (or a static list), observes traffic via METRIC_RECORD_COMMIT,                                             #
-  and compares active vs seen every 30 seconds. Commits a custom detection when a                                             #
-  VLAN is missing for a configurable number of consecutive cycles.                                                            #
+  Detects when active VLANs stop transmitting packets. Three monitoring tiers                                                 #
+  (critical, standard, low_value) with independent thresholds and refire rates.                                               #
+  Discovers active VLANs via REST API, observes traffic via MRC, compares every                                               #
+  30 seconds. Commits a detection when a VLAN is missing for its tier threshold.                                              #
+  Fires a recovery update when the VLAN returns.                                                                              #
 #                                                                                                                             #
   Advanced Trigger Options (MUST be configured):                                                                              #
     Metric cycle: 30sec  |  Metric types: extrahop.vlan.net                                                                   #
 #                                                                                                                             #
   Assignments: Global events only. Cannot be assigned to devices.                                                             #
 #                                                                                                                             #
-  Performance: Active and seen lists are stored as pipe-delimited strings                                                     #
-  (e.g. |100|200|300|) to avoid JSON.parse/stringify on the MRC hot path.                                                     #
-  Membership checks use indexOf. This follows the best practices guidance                                                     #
-  against calling JSON methods on session table objects in high-volume events.                                                #
+  Performance: Active and seen lists stored as pipe-delimited strings to avoid                                                #
+  JSON.parse/stringify on the MRC hot path. Membership checks use indexOf.                                                    #
 #                                                                                                                             #
 ###############################################################################################################################
 */
@@ -34,10 +33,29 @@ const DYNAMIC_VLAN         = true
 const API_ODS_TARGET       = 'EDA'
 const ACTIVE_DAYS_REQUIRED = 7
 const DISCOVERY_INTERVAL   = 300
-const STATIC_VLAN_IDS      = []
+
+// Tier arrays. Critical VLANs bypass discovery and are always monitored.
+// Discovered VLANs default to standard unless placed in another tier.
+// VLAN_EXCLUDE_IDS suppresses any tier.
+const CRITICAL_VLAN_IDS    = []
+const STANDARD_VLAN_IDS    = []
+const LOW_VALUE_VLAN_IDS   = []
 const VLAN_EXCLUDE_IDS     = []
-const DOWN_CYCLES_THRESHOLD = 4
-const REFIRE_INTERVAL      = 10
+
+// Per-tier thresholds (consecutive 30s cycles before detection)
+const CRITICAL_THRESHOLD   = 10     // 5 minutes
+const STANDARD_THRESHOLD   = 120    // 1 hour
+const LOW_VALUE_THRESHOLD  = 360    // 3 hours
+
+// Per-tier refire intervals (cycles between detection updates)
+const CRITICAL_REFIRE      = 60     // every 30 minutes
+const STANDARD_REFIRE      = 120    // every 1 hour
+const LOW_VALUE_REFIRE     = 360    // every 3 hours
+
+// Legacy fallback (used if DYNAMIC_VLAN is false and no tier arrays
+// are populated). Normally not needed with tiered config.
+const STATIC_VLAN_IDS      = []
+
 const LOG_ENABLED          = true
 const LOG_LEVEL            = 'INFO'
 const EMIT_ACTIVE_VLAN_METRIC = false
@@ -46,7 +64,7 @@ const EMIT_ACTIVE_VLAN_METRIC = false
 //  CONSTANTS                                                                                                                //
 // ============================================================================================================================
 
-const VERSION  = '4.1.0'
+const VERSION  = '5.0.0'
 const HOSTNAME = System.hostname || 'unknown'
 
 const SK_ACTIVE  = 'vlan_det_active'
@@ -73,13 +91,13 @@ const RISK_MAX   = 99
 const RISK_RAMP  = 120
 const LOG_MAX    = 1900
 
+// Pre-computed tier lookup sets
+const TIER_CRIT = new Set(CRITICAL_VLAN_IDS)
+const TIER_LOW  = new Set(LOW_VALUE_VLAN_IDS)
+
 // ============================================================================================================================
 //  FUNCTIONS                                                                                                                //
 // ============================================================================================================================
-
-// Pipe-delimited format: '|100|200|300|'
-// indexOf is O(n) on a string but avoids JSON.parse
-// and object allocation on the MRC hot path.
 
 function pipeHas(str, id) {
     return str.indexOf('|' + id + '|') !== -1
@@ -87,7 +105,6 @@ function pipeHas(str, id) {
 
 function pipeToArray(str) {
     if (!str || str === '||') return []
-    // '|100|200|' -> ['100','200'] -> [100, 200]
     const parts = str.substring(1, str.length - 1)
         .split('|')
     const arr = []
@@ -123,6 +140,40 @@ function sessionSet(key, value, expire) {
     })
 }
 
+function getTier(vlan) {
+    if (TIER_CRIT.has(vlan)) return 'critical'
+    if (TIER_LOW.has(vlan)) return 'low_value'
+    return 'standard'
+}
+
+function getThreshold(tier) {
+    if (tier === 'critical') return CRITICAL_THRESHOLD
+    if (tier === 'low_value') return LOW_VALUE_THRESHOLD
+    return STANDARD_THRESHOLD
+}
+
+function getRefire(tier) {
+    if (tier === 'critical') return CRITICAL_REFIRE
+    if (tier === 'low_value') return LOW_VALUE_REFIRE
+    return STANDARD_REFIRE
+}
+
+function formatDuration(secs) {
+    if (secs < 60) return secs + ' seconds'
+    const h = Math.floor(secs / 3600)
+    const m = Math.floor((secs % 3600) / 60)
+    const s = secs % 60
+    var hl = h === 1 ? 'hour' : 'hours'
+    var ml = m === 1 ? 'minute' : 'minutes'
+    var sl = s === 1 ? 'second' : 'seconds'
+    if (h === 0) {
+        if (s === 0) return m + ' ' + ml
+        return m + ' ' + ml + ' ' + s + ' ' + sl
+    }
+    if (m === 0) return h + ' ' + hl
+    return h + ' ' + hl + ' ' + m + ' ' + ml
+}
+
 function handleGetVlans(body) {
     if (!Array.isArray(body) || body.length === 0) {
         logMsg('No VLANs from API', 'api', 'WARNING')
@@ -144,7 +195,6 @@ function handleGetVlans(body) {
         )
         return
     }
-    // POST /metrics to get 7-day bucket counts
     try {
         Remote.HTTP(API_ODS_TARGET).post({
             path: '/api/v1/metrics',
@@ -195,8 +245,9 @@ function handleGetMetrics(body) {
         if (c >= needed) active.push(v)
     })
 
-    // Store as pipe-delimited for fast indexOf on MRC
-    sessionSet(SK_ACTIVE, arrayToPipe(active), EXP_ACTIVE)
+    sessionSet(
+        SK_ACTIVE, arrayToPipe(active), EXP_ACTIVE
+    )
 
     logMsg(
         'Active VLANs: ' + active.length,
@@ -218,23 +269,38 @@ function handleGetMetrics(body) {
 }
 
 function compareVlans() {
-    let activeStr
+    // Build the monitored VLAN list
     let active
     if (DYNAMIC_VLAN) {
-        activeStr = Session.lookup(SK_ACTIVE)
-        if (activeStr === null || activeStr === '||') {
-            return
-        }
-        active = pipeToArray(activeStr)
+        const str = Session.lookup(SK_ACTIVE)
+        active = (str && str !== '||')
+            ? pipeToArray(str) : []
     } else {
-        active = STATIC_VLAN_IDS
-        if (VLAN_EXCLUDE_IDS.length > 0) {
-            const ex = new Set(VLAN_EXCLUDE_IDS)
-            active = active.filter(function (v) {
-                return !ex.has(v)
-            })
+        active = STATIC_VLAN_IDS.slice()
+    }
+
+    // Merge critical VLANs unconditionally
+    const seen = new Set(active)
+    for (let i = 0; i < CRITICAL_VLAN_IDS.length; i++) {
+        if (!seen.has(CRITICAL_VLAN_IDS[i])) {
+            active.push(CRITICAL_VLAN_IDS[i])
         }
-        if (active.length === 0) return
+    }
+
+    // Apply exclude filter
+    if (VLAN_EXCLUDE_IDS.length > 0) {
+        const ex = new Set(VLAN_EXCLUDE_IDS)
+        active = active.filter(function (v) {
+            return !ex.has(v)
+        })
+    }
+
+    if (active.length === 0) {
+        logMsg(
+            'No active VLANs to monitor',
+            'compare', 'DEBUG'
+        )
+        return
     }
 
     const seenStr = Session.lookup(SK_SEEN) || '||'
@@ -242,69 +308,87 @@ function compareVlans() {
     for (let i = 0; i < active.length; i++) {
         const vlan = active[i]
         const key = SK_DOWN + vlan
+        const tier = getTier(vlan)
+        const threshold = getThreshold(tier)
+        const refire = getRefire(tier)
 
         if (pipeHas(seenStr, vlan)) {
+            // VLAN is healthy. Check for recovery.
             const was = Session.lookup(key)
-            if (was !== null) {
-                Session.remove(key)
+            if (was !== null
+                && typeof was === 'number'
+                && was >= threshold) {
+                fireRecovery(
+                    vlan, was, tier, threshold
+                )
                 logMsg(
-                    'VLAN ' + vlan + ' recovered'
-                        + ' after ' + was + ' cycles',
+                    'VLAN ' + vlan + ' (' + tier
+                        + ') recovered after '
+                        + was + ' cycles',
                     vlan, 'WARNING'
                 )
+            } else if (was !== null) {
+                logMsg(
+                    'VLAN ' + vlan + ' (' + tier
+                        + ') back before threshold',
+                    vlan, 'INFO'
+                )
             }
+            if (was !== null) Session.remove(key)
             continue
         }
 
-        // Missing. lookup + replace refreshes expiry.
+        // VLAN missing. Increment counter.
         const prev = Session.lookup(key)
         const count = (prev !== null
             && typeof prev === 'number')
             ? prev + 1 : 1
         sessionSet(key, count, EXP_DOWN)
 
-        if (count < DOWN_CYCLES_THRESHOLD) {
+        if (count < threshold) {
             logMsg(
-                'VLAN ' + vlan + ' missing '
-                    + count + '/' + DOWN_CYCLES_THRESHOLD,
+                'VLAN ' + vlan + ' (' + tier
+                    + ') missing '
+                    + count + '/' + threshold,
                 vlan, 'WARNING'
             )
             continue
         }
-        const past = count - DOWN_CYCLES_THRESHOLD
-        if (past !== 0
-            && past % REFIRE_INTERVAL !== 0) {
+        const past = count - threshold
+        if (past !== 0 && past % refire !== 0) {
             continue
         }
-        fireDetection(vlan, count)
+        fireDetection(
+            vlan, count, tier, threshold
+        )
         logMsg(
-            'VLAN ' + vlan + ' down '
-                + count + ' cycles — fired',
+            'VLAN ' + vlan + ' (' + tier
+                + ') down ' + count
+                + ' cycles — fired',
             vlan, 'WARNING'
         )
     }
 }
 
-function fireDetection(vlan, count) {
+function fireDetection(vlan, count, tier, threshold) {
     let name = 'VLAN_Down_Detector'
     let title = 'Data Feed VLAN Lost'
     if (LICENSE_MODEL === 'NDR') {
         name += '_NDR'
         title += ' (NDR)'
     }
-    const secs = count * 30
-    let dur
-    if (secs < 60) dur = secs + ' seconds'
-    else if (secs < 3600)
-        dur = '~' + Math.round(secs / 60) + ' min'
-    else dur = '~' + (Math.round(secs / 36) / 100)
-        + ' hours'
-    const desc = '**VLAN ' + vlan + '** has stopped'
-        + ' receiving or transmitting packets.\n\n'
+    const dur = formatDuration(count * 30)
+    const desc = '**VLAN ' + vlan
+        + '** has stopped receiving or'
+        + ' transmitting packets.\n\n'
+        + '* **Tier:** ' + tier + '\n'
         + '* **Duration:** ' + dur + '\n'
         + '* **Sensor:** ' + HOSTNAME + '\n'
         + '* **Down cycles:** ' + count
-        + ' (threshold: ' + DOWN_CYCLES_THRESHOLD + ')'
+        + ' (threshold: ' + threshold + ')\n'
+        + '* **Note:** This detection auto-resolves'
+        + ' ~24 hours after the last update'
+        + ' (identityTtl: day).'
     /** @type {'day'} */
     const ttl = 'day'
     const opts = {
@@ -316,7 +400,7 @@ function fireDetection(vlan, count) {
     }
     if (LICENSE_MODEL === 'NDR') {
         const past = Math.max(
-            0, count - DOWN_CYCLES_THRESHOLD
+            0, count - threshold
         )
         const ramp = Math.min(1, past / RISK_RAMP)
         opts.riskScore = Math.round(
@@ -333,6 +417,45 @@ function fireDetection(vlan, count) {
     }
 }
 
+function fireRecovery(vlan, count, tier, threshold) {
+    let name = 'VLAN_Down_Detector'
+    let title = 'Data Feed VLAN Lost'
+    if (LICENSE_MODEL === 'NDR') {
+        name += '_NDR'
+        title += ' (NDR)'
+    }
+    const dur = formatDuration(count * 30)
+    const desc = '**VLAN ' + vlan
+        + '** has recovered.\n\n'
+        + '* **Tier:** ' + tier + '\n'
+        + '* **Downtime:** ' + dur + '\n'
+        + '* **Sensor:** ' + HOSTNAME + '\n'
+        + '* **Down cycles:** ' + count
+        + ' (threshold: ' + threshold + ')\n'
+        + '* **Note:** This detection will expire'
+        + ' ~24 hours after this recovery update'
+        + ' (identityTtl: day). No further updates'
+        + ' will be sent unless the VLAN goes'
+        + ' down again.'
+    /** @type {'day'} */
+    const ttl = 'day'
+    const opts = {
+        title: title,
+        description: desc,
+        participants: [],
+        identityKey: 'vlan_down_' + vlan,
+        identityTtl: ttl
+    }
+    try { commitDetection(name, opts) }
+    catch (e) {
+        logMsg(
+            'Recovery detection failed for VLAN '
+                + vlan + ': ' + e.message,
+            vlan, 'WARNING'
+        )
+    }
+}
+
 // ============================================================================================================================
 //  EVENT: TIMER_30SEC                                                                                                       //
 // ============================================================================================================================
@@ -341,10 +464,10 @@ if (event === 'TIMER_30SEC') {
 
     if (!DYNAMIC_VLAN
         && STATIC_VLAN_IDS.length === 0
+        && CRITICAL_VLAN_IDS.length === 0
         && Session.lookup(SK_WARNED) === null) {
         logMsg(
-            'DYNAMIC_VLAN is false but'
-                + ' STATIC_VLAN_IDS is empty',
+            'No VLANs configured to monitor',
             'init', 'WARNING'
         )
         sessionSet(SK_WARNED, 1, EXP_INIT)
@@ -386,7 +509,6 @@ if (event === 'TIMER_30SEC') {
         compareVlans()
     }
 
-    // Reset seen set. Pipe-delimited empty = '||'
     sessionSet(SK_SEEN, '||', EXP_SEEN)
 }
 
@@ -425,33 +547,39 @@ if (event === 'REMOTE_RESPONSE') {
         return
     }
     if (ctx === 'get_vlans') handleGetVlans(body)
-    else if (ctx === 'get_metrics') handleGetMetrics(body)
+    else if (ctx === 'get_metrics') {
+        handleGetMetrics(body)
+    }
 }
 
 // ============================================================================================================================
 //  EVENT: METRIC_RECORD_COMMIT                                                                                              //
 //  Hot path: fires per VLAN per 30s cycle. No JSON.parse/stringify.                                                         //
-//  Uses pipe-delimited strings + indexOf per best practices guidance.                                                       //
+//  Uses pipe-delimited strings + indexOf per best practices.                                                                //
 // ============================================================================================================================
 
 if (event === 'METRIC_RECORD_COMMIT') {
-    if (MetricRecord.id !== 'extrahop.vlan.net') return
+    if (MetricRecord.id !== 'extrahop.vlan.net') {
+        return
+    }
 
     const pkts = MetricRecord.fields['pkts']
     if (pkts === undefined || pkts === 0) return
 
     const vlanId = MetricRecord.object['id']
 
-    // Check active list (pipe-delimited, no JSON.parse)
+    // Check active list OR critical list
     const activeStr = Session.lookup(SK_ACTIVE)
-    if (activeStr === null || activeStr === '||') return
-    if (!pipeHas(activeStr, vlanId)) return
+    const inActive = activeStr !== null
+        && activeStr !== '||'
+        && pipeHas(activeStr, vlanId)
+    const inCritical = TIER_CRIT.has(vlanId)
 
-    // Check/update seen set (pipe-delimited, no JSON)
+    if (!inActive && !inCritical) return
+
     const seenStr = Session.lookup(SK_SEEN) || '||'
     if (pipeHas(seenStr, vlanId)) return
 
-    // Append this VLAN to the seen string
     const updated = (seenStr === '||')
         ? '|' + vlanId + '|'
         : seenStr + vlanId + '|'
