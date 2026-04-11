@@ -75,8 +75,6 @@ At the start of each 30-second window, the trigger compares active VLANs against
 
 When a VLAN that was down past its threshold comes back, the trigger fires one more `commitDetection` call with the same `identityKey`. This consolidates into the existing ongoing detection. The description is updated to show the VLAN has recovered, the total downtime, and a note explaining when the detection will expire.
 
-The title stays "Data Feed VLAN Lost" because detections are reserved for negative events. The description makes it clear the VLAN is back.
-
 If a VLAN was counting up but hadn't reached its threshold yet, no recovery detection is fired. The counter is just cleared.
 
 ---
